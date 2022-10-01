@@ -1,0 +1,167 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Design VPC with the help of CFT
+
+Parameters:
+  ImageId:
+    Type: String
+    Description: "Linux 2 AMI for Ireland eu-west1 Region"
+    Default: "ami-009d6802948d06e52"
+
+  InstanceType:
+    Type: String
+    Description: Choosing  t2 micro because it is free
+    Default: t2.micro
+
+  VpcEnv:
+    Type: String
+    Default: DevEnv
+    Description: Please enter the enviroment name
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: Please enter the VPC CIDR Range
+
+  PulicSubnetCIdrA:
+    Type: String
+    Default: 10.0.0.0/24
+    Description: Please enter the VPC Public Subnet A Cidr Ranges
+
+  PrivateSubnetCidrB:
+    Type: String
+    Default: 10.0.16.0/20
+    Description: Please enter the VPC Private Subnet A Cidr Ranges
+
+  Ec2keyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+
+    Description: "EC2 KeyPair to enable SSH access to the instance"
+
+Resources:
+  # Create VPC
+  DevVpcDemo:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      Tags:
+        - Key: Name
+          Value: !Ref VpcEnv
+
+  # Create Internet gateway for access over the internet
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref VpcEnv
+
+  # Attach Internetgateway to VPC
+  InternetGatewayAttachToVpc:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DevVpcDemo
+      InternetGatewayId: !Ref InternetGateway
+
+  # Create Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DevVpcDemo
+
+  PublicRouteTableRouteToInternetGateway:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref DevVpcDemo
+      CidrBlock: !Ref PulicSubnetCIdrA
+      AvailabilityZone: !Select [0, !GetAZs ] # Get the second AZ in the list
+      Tags:
+        - Key: Name
+          Value: Public Subnet AZa
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DevVpcDemo
+      CidrBlock: !Ref PrivateSubnetCidrB
+      AvailabilityZone: !Select [0, !GetAZs ]
+      Tags:
+        - Key: Name
+          Value: Private Subnet AZa
+
+  PublicSubnetAAssociateWithPublicRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetA
+
+  BastionHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Bastion host SG
+      VpcId: !Ref DevVpcDemo
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          ToPort: 22
+          FromPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${VpcEnv} PrivateSubnetSG
+
+  BastionHost:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - DevVpcDemo
+      - PublicSubnetA
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroupIds:
+        - !GetAtt BastionHostSecurityGroup.GroupId
+      KeyName: !Ref Ec2keyPair
+      AvailabilityZone: !Select [0, !GetAZs ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${VpcEnv} Public Subnet A
+
+  PrivateSubnetSecurityGrop:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: This seucirty group wil get crated in private Subnet
+      VpcId: !Ref DevVpcDemo
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          ToPort: 22
+          FromPort: 22 
+          SourceSecurityGroupId: !GetAtt BastionHostSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub ${VpcEnv} PrivateSubnetSG
+
+  PrivateEc2:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      AvailabilityZone: !Select [0, !GetAZs ]
+      SecurityGroupIds:
+        - !GetAtt PrivateSubnetSecurityGrop.GroupId
+      KeyName: !Ref Ec2keyPair
+      Tags:
+        - Key: Name
+          Value: !Sub ${VpcEnv} Private Subnet A
+
+Outputs:
+  DemoInstanceId:
+    Description: VPC Ec2 Instance Id
+    Value: !Ref BastionHost
